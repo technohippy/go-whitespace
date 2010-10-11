@@ -17,8 +17,9 @@ const (
 
 const (
   STAGE_IMP = iota
-  STAGE_instruction
-  STAGE_PARAM
+  STAGE_COMMAND
+  STAGE_NUMBER
+  STAGE_LABEL
 
   IMP_STACK
   IMP_ARITHMETIC
@@ -57,16 +58,19 @@ const (
 )
 
 var is_debug bool
-var last_char = NULL_CHAR
 
-var current_stage = STAGE_IMP
-var current_imp int
-var current_instruction int
+// Flow
+var (
+  last_char = NULL_CHAR
+  current_stage = STAGE_IMP
+  current_imp int
+  current_instruction int
+)
 
 var program [STACK_SIZE][3]int
 var pc = 0
 
-var marks = make(map[int] int)
+var marks = make(map[string] int)
 
 var heap = make(map[int] int)
 var stack [STACK_SIZE]int
@@ -95,8 +99,9 @@ func parse(file *os.File) {
       case ' ' , '\t', '\r', '\n':
         switch current_stage {
         case STAGE_IMP: parse_imp(c)
-        case STAGE_instruction: parse_instruction(c)
-        case STAGE_PARAM: parse_parameter(c)
+        case STAGE_COMMAND: parse_instruction(c)
+        case STAGE_NUMBER: parse_number(c)
+        case STAGE_LABEL: parse_label(c)
         }
       }
     }
@@ -112,12 +117,12 @@ func parse_imp(c int) {
       // [Space]
       debug("[IMP:STACK] ")
       current_imp = IMP_STACK
-      set_stage(STAGE_instruction)
+      set_stage(STAGE_COMMAND)
     case '\t':
       // [Tab][Space]
       debug("[IMP:ARITHMETIC] ")
       current_imp = IMP_ARITHMETIC
-      set_stage(STAGE_instruction)
+      set_stage(STAGE_COMMAND)
     }
   case '\t':
     switch last_char {
@@ -125,7 +130,7 @@ func parse_imp(c int) {
       // [Tab][Tab]
       debug("[IMP:HEAP] ")
       current_imp = IMP_HEAP
-      set_stage(STAGE_instruction)
+      set_stage(STAGE_COMMAND)
     }
   case '\r', '\n':
     switch last_char {
@@ -133,12 +138,12 @@ func parse_imp(c int) {
       // [LF]
       debug("[IMP:FLOW] ")
       current_imp = IMP_FLOW
-      set_stage(STAGE_instruction)
+      set_stage(STAGE_COMMAND)
     case '\t':
       // [Tab][LF]
       debug("[IMP:I/O] ")
       current_imp = IMP_IO
-      set_stage(STAGE_instruction)
+      set_stage(STAGE_COMMAND)
     }
   }
   if current_stage == STAGE_IMP {
@@ -150,48 +155,48 @@ func parse_imp(c int) {
 func parse_instruction(c int) {
   switch current_imp {
   case IMP_STACK:
-    parse_instruction_stack(c)
+    parse_command_stack(c)
   case IMP_ARITHMETIC:
-    parse_instruction_arithmetic(c)
+    parse_command_arithmetic(c)
   case IMP_HEAP:
-    parse_instruction_heap(c)
+    parse_command_heap(c)
   case IMP_FLOW:
-    parse_instruction_flow(c)
+    parse_command_flow(c)
   case IMP_IO:
-    parse_instruction_io(c)
+    parse_command_io(c)
   }
-  if current_stage == STAGE_instruction {
+  if current_stage == STAGE_COMMAND {
     last_char = c
   }
 }
 
 // Stack Manipulation (IMP: [Space])
-func parse_instruction_stack(c int) {
+func parse_command_stack(c int) {
   switch c {
   case ' ':
     switch last_char {
     case NULL_CHAR:
-      // [Space] Number
-      debug("[Number] ")
+      // [Space] Number : Push the number onto the stack
+      debug("[Push] ")
       current_instruction = STACK_PUSH
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_NUMBER)
     case '\r', '\n':
-      // [LF][Space]
+      // [LF][Space] : Duplicate the top item on the stack
       debug("[Duplicate]\n")
       push_instruction([3]int{STACK_DUPLICATE, 0, 0})
       set_stage(STAGE_IMP)
     case '\t':
-      // [Tab][Space]
+      // [Tab][Space] Number : Copy the nth item on the stack onto the top of the stack
       debug("[Copy] ")
       current_instruction = STACK_COPY
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_NUMBER)
     }
   case '\t':
     switch last_char {
     case '\r', '\n':
-      // [LF][Tab]
-      debug("[Copy]\n")
-      push_instruction([3]int{STACK_COPY, 0, 0})
+      // [LF][Tab] : Swap the top two items on the stack
+      debug("[Swap]\n")
+      push_instruction([3]int{STACK_SWAP, 0, 0})
       set_stage(STAGE_IMP)
     default:
       error(fmt.Sprintf("Parse Error: stack: '%c'", c))
@@ -201,15 +206,15 @@ func parse_instruction_stack(c int) {
     case NULL_CHAR:
       // do nothing
     case '\r', '\n':
-      // [LF][LF]
+      // [LF][LF] : Discard the top item on the stack
       debug("[Discard]\n")
       push_instruction([3]int{STACK_DISCARD, 0, 0})
       set_stage(STAGE_IMP)
     case '\t':
-      // [Tab][LF] Number
+      // [Tab][LF] Number : Slide n items off the stack, keeping the top item
       debug("[Slide] ")
       current_instruction = STACK_SLIDE
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_NUMBER)
     default:
       error(fmt.Sprintf("Parse Error: stack: '%c'", c))
     }
@@ -217,17 +222,17 @@ func parse_instruction_stack(c int) {
 }
 
 // Arithmetic (IMP: [Tab][Space])
-func parse_instruction_arithmetic(c int) {
+func parse_command_arithmetic(c int) {
   switch c {
   case ' ':
     switch last_char {
     case ' ':
-      // [Space][Space]
+      // [Space][Space] : Addition
       debug("[Add]\n")
       push_instruction([3]int{ARITHMETIC_ADD, 0, 0})
       set_stage(STAGE_IMP)
     case '\t':
-      // [Tab][Space]
+      // [Tab][Space] : Integer Division
       debug("[Devision]\n")
       push_instruction([3]int{ARITHMETIC_DIV, 0, 0})
       set_stage(STAGE_IMP)
@@ -235,12 +240,12 @@ func parse_instruction_arithmetic(c int) {
   case '\t':
     switch last_char {
     case ' ':
-      // [Space][Tab]
+      // [Space][Tab] : Subtraction
       debug("[Subtraction]\n")
       push_instruction([3]int{ARITHMETIC_SUB, 0, 0})
       set_stage(STAGE_IMP)
     case '\t':
-      // [Tab][Tab]
+      // [Tab][Tab] : Modulo
       debug("[Modulo]\n")
       push_instruction([3]int{ARITHMETIC_MOD, 0, 0})
       set_stage(STAGE_IMP)
@@ -248,7 +253,7 @@ func parse_instruction_arithmetic(c int) {
   case '\r', '\n':
     switch last_char {
     case ' ':
-      // [Space][LF]
+      // [Space][LF] : Multiplication
       debug("[Multiplication]\n")
       push_instruction([3]int{ARITHMETIC_MUL, 0, 0})
       set_stage(STAGE_IMP)
@@ -259,15 +264,15 @@ func parse_instruction_arithmetic(c int) {
 }
 
 // Heap Access (IMP: [Tab][Tab])
-func parse_instruction_heap(c int) {
+func parse_command_heap(c int) {
   switch c {
   case ' ':
-    // [Space]
+    // [Space] : Store
     debug("[Store]\n")
     push_instruction([3]int{HEAP_STORE, 0, 0})
     set_stage(STAGE_IMP)
   case '\t':
-    // [Tab]
+    // [Tab] : Retrieve
     debug("[Retrieve]\n")
     push_instruction([3]int{HEAP_RETRIEVE, 0, 0})
     set_stage(STAGE_IMP)
@@ -277,67 +282,67 @@ func parse_instruction_heap(c int) {
 }
 
 // Flow Control (IMP: [LF])
-func parse_instruction_flow(c int) {
+func parse_command_flow(c int) {
   switch c {
   case ' ':
     switch last_char {
     case ' ':
-      // [Space][Space] Label
-      debug("[Mark] ")
+      // [Space][Space] Label : Mark a location in the program
+      debug("[*MARK*] ")
       current_instruction = FLOW_MARK
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_LABEL)
     case '\t':
-      // [Tab][Space] Label
+      // [Tab][Space] Label : Jump to a label if the top of the stack is zero
       debug("[Jump Zero] ")
       current_instruction = FLOW_JUMP_ZERO
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_LABEL)
     }
   case '\t':
     switch last_char {
     case ' ':
-      // [Space][Tab] Label
+      // [Space][Tab] Label : Call a subroutine
       debug("[Call] ")
       current_instruction = FLOW_CALL_SUB
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_LABEL)
     case '\t':
-      // [Tab][Tab] Label
+      // [Tab][Tab] Label : Jump to a label if the top of the stack is negative
       debug("[Jump Neg] ")
       current_instruction = FLOW_JUMP_NEGATIVE
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_LABEL)
     }
   case '\r', '\n':
     switch last_char {
     case ' ':
-      // [Space][LF] Label
+      // [Space][LF] Label : Jump unconditionally to a label
       debug("[Jump] ")
       current_instruction = FLOW_JUMP
-      set_stage(STAGE_PARAM)
+      set_stage(STAGE_LABEL)
     case '\t':
-      // [Tab][LF]
+      // [Tab][LF] : End a subroutine and transfer control back to the caller
       debug("[End Sub]\n")
       push_instruction([3]int{FLOW_END_SUB, 0, 0})
       set_stage(STAGE_IMP)
     case '\r', '\n':
-      // [LF][LF]
+      // [LF][LF] : End the program
       debug("[End]\n")
       push_instruction([3]int{FLOW_END, 0, 0})
-      //os.Exit(0)
+      set_stage(STAGE_IMP)
     }
   }
 }
 
 // I/O (IMP: [Tab][LF])
-func parse_instruction_io(c int) {
+func parse_command_io(c int) {
   switch c {
   case ' ':
     switch last_char {
     case ' ':
-      // [Space][Space]
+      // [Space][Space] : Output the character at the top of the stack
       debug("[Out Char]\n")
       push_instruction([3]int{IO_OUT_CHAR, 0, 0})
       set_stage(STAGE_IMP)
     case '\t':
-      // [Tab][Space]
+      // [Tab][Space] : Read a character and place it in the location given by the top of the stack
       debug("[In Char]\n")
       push_instruction([3]int{IO_IN_CHAR, 0, 0})
       set_stage(STAGE_IMP)
@@ -345,12 +350,12 @@ func parse_instruction_io(c int) {
   case '\t':
     switch last_char {
     case ' ':
-      // [Space][Space]
+      // [Space][Tab] : Output the number at the top of the stack
       debug("[Out Num]\n")
       push_instruction([3]int{IO_OUT_NUM, 0, 0})
       set_stage(STAGE_IMP)
     case '\t':
-      // [Tab][Space]
+      // [Tab][Tab] : Read a number and place it in the location given by the top of the stack
       debug("[In Num]\n")
       push_instruction([3]int{IO_IN_NUM, 0, 0})
       set_stage(STAGE_IMP)
@@ -363,8 +368,8 @@ func parse_instruction_io(c int) {
 var sign = 0
 var abs = 0
 
-// Number, Label
-func parse_parameter(c int) {
+// Number
+func parse_number(c int) {
   if sign == 0 {
     switch c {
     case ' ': sign = 1
@@ -381,12 +386,30 @@ func parse_parameter(c int) {
     case '\r', '\n':
       num := sign * abs
       debug(fmt.Sprintf("[%d]\n", num))
+      push_instruction([3]int{current_instruction, sign, num})
+      //if current_instruction == FLOW_MARK { marks[fmt.Sprintf("%d/%d", sign, num)] = pc - 1 }
+      set_stage(STAGE_IMP)
       sign = 0
       abs = 0
-      push_instruction([3]int{current_instruction, 1, num})
-      if current_instruction == FLOW_MARK { marks[num] = pc - 1 }
-      set_stage(STAGE_IMP)
     }
+  }
+}
+
+var label = 1
+// label
+func parse_label(c int) {
+  switch c {
+  case ' ':
+    label <<= 1
+  case '\t':
+    label <<= 1
+    label |= 1
+  case '\r', '\n':
+    debug(fmt.Sprintf("[%d]\n", label))
+    push_instruction([3]int{current_instruction, 0, label})
+    if current_instruction == FLOW_MARK { marks[fmt.Sprintf("%d", label)] = pc - 1 }
+    set_stage(STAGE_IMP)
+    label = 1
   }
 }
 
@@ -398,8 +421,9 @@ func eval() {
   for pc = 0; pc < max_pc; pc++ {
     //dump_stack()
     instruction := program[pc]
+    command := instruction[0]
     param := instruction[2]
-    switch instruction[0] {
+    switch command {
     case STACK_PUSH:
       debug(fmt.Sprintf("(STACK_PUSH:%d)\n", param))
       push_stack(param)
@@ -461,19 +485,19 @@ func eval() {
     case FLOW_CALL_SUB:
       debug(fmt.Sprintf("(FLOW_CALL_SUB:%d)\n", param))
       push_call_stack()
-      pc = marks[param]
+      pc = marks[fmt.Sprintf("%d", param)]
     case FLOW_JUMP:
       debug(fmt.Sprintf("(FLOW_JUMP:%d)\n", param))
-      pc = marks[param]
+      pc = marks[fmt.Sprintf("%d", param)]
     case FLOW_JUMP_ZERO:
       debug(fmt.Sprintf("(FLOW_JUMP_ZERO:%d)\n", param))
       if pop_stack() == 0 {
-        pc = marks[param]
+        pc = marks[fmt.Sprintf("%d", param)]
       }
     case FLOW_JUMP_NEGATIVE:
       debug(fmt.Sprintf("(FLOW_JUMP_NEGATIVE:%d)\n", param))
       if pop_stack() < 0 {
-        pc = marks[param]
+        pc = marks[fmt.Sprintf("%d", param)]
       }
     case FLOW_END_SUB:
       debug(fmt.Sprintf("(FLOW_END_SUB)\n"))
@@ -496,7 +520,7 @@ func eval() {
     case IO_IN_NUM:
       debug(fmt.Sprintf("(IO_IN_NUM)\n"))
       line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-      num, _ := strconv.Atoi(line[:len(line)-1])
+      num, _ := strconv.Atoi(line[0:len(line)-1])
       heap[pop_stack()] = num
     }
   }
